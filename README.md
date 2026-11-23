@@ -19,15 +19,19 @@ Progressive Web App mobile-first ottimizzata per iPhone (Safari iOS), progettata
 ## Contratto API Google Apps Script
 
 - **`GET`** `API_URL?token=API_TOKEN`
-  - Restituisce un array JSON di transazioni (o `{ data: [...] }` / `{ transactions: [...] }`) con campi `id`, `amount`, `merchant`, `category`, `date`.
+  - Restituisce un array JSON di transazioni oppure un oggetto `{ transactions: [...], monthly_budget: 600 }` (o `data` / `items` / `rows`). Se `monthly_budget` è presente, la PWA aggiorna automaticamente `BUDGET_MENSILE` in `localStorage` e ricalcola la dashboard.
 - **`POST`** `API_URL` (con header `Content-Type: text/plain;charset=utf-8` per evitare preflight CORS):
-  - Aggiunta:
+  - Aggiunta spesa:
     ```json
     { "token": "...", "action": "add", "amount": 12.5, "merchant": "Bar", "category": "Cibo", "date": "2026-11-23T10:30:00.000Z" }
     ```
-  - Eliminazione:
+  - Eliminazione spesa:
     ```json
     { "token": "...", "action": "delete", "id": "tx_123" }
+    ```
+  - Aggiornamento budget mensile:
+    ```json
+    { "token": "...", "action": "set_budget", "monthly_budget": 750 }
     ```
 
 ## Deploy su GitHub Pages e installazione su iPhone

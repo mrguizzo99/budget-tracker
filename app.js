@@ -85,6 +85,7 @@
     transactions: [],
     lastSync: null,
     isSyncing: false,
+    budgetInputDirty: false,
     pendingDeleteTx: null,
     toastTimer: null
   };
@@ -624,9 +625,27 @@
       throw new Error("Formato lista transazioni non riconosciuto");
     }
 
-    return rawList
+    let monthlyBudget = null;
+    if (json && typeof json === "object" && !Array.isArray(json)) {
+      const rawRemoteBudget =
+        json.monthly_budget !== undefined
+          ? json.monthly_budget
+          : json.data && !Array.isArray(json.data) && json.data.monthly_budget !== undefined
+            ? json.data.monthly_budget
+            : null;
+      if (rawRemoteBudget !== null && rawRemoteBudget !== "") {
+        const parsedRemoteBudget = parseEuroInput(rawRemoteBudget);
+        if (Number.isFinite(parsedRemoteBudget) && parsedRemoteBudget > 0) {
+          monthlyBudget = Math.round(parsedRemoteBudget * 100) / 100;
+        }
+      }
+    }
+
+    const transactions = rawList
       .map((item, idx) => normalizeTransaction(item, idx))
       .filter(Boolean);
+
+    return { transactions, monthlyBudget };
   }
 
   async function apiPostAction(payload) {
@@ -673,8 +692,13 @@
     updateSyncStatusUI("syncing");
 
     try {
-      const remoteList = await apiFetchTransactions();
+      const { transactions: remoteList, monthlyBudget: remoteBudget } =
+        await apiFetchTransactions();
       state.transactions = remoteList;
+      if (remoteBudget !== null) {
+        state.config.monthlyBudget = remoteBudget;
+        localStorage.setItem(STORAGE_KEYS.BUDGET_MENSILE, String(remoteBudget));
+      }
       state.isSyncing = false;
       saveTransactionsCache();
       saveLastSync(new Date());
@@ -1021,6 +1045,7 @@
   }
 
   function openSettingsModal({ mandatory = false } = {}) {
+    state.budgetInputDirty = false;
     dom.inputBudget.value = String(state.config.monthlyBudget).replace(".", ",");
     dom.inputResetDay.value = String(sanitizeResetDay(state.config.resetDay));
     dom.inputApiUrl.value = state.config.apiUrl;
@@ -1197,10 +1222,16 @@
       return;
     }
 
+    const prevBudget = state.config.monthlyBudget;
+    const newBudget = Math.round(budget * 100) / 100;
+    const budgetChanged =
+      state.budgetInputDirty || Math.abs(newBudget - prevBudget) >= 0.005;
+    state.budgetInputDirty = false;
+
     state.config = {
       apiUrl,
       apiToken,
-      monthlyBudget: Math.round(budget * 100) / 100,
+      monthlyBudget: newBudget,
       resetDay: rawResetDay,
       localMode: !apiUrl
     };
@@ -1209,6 +1240,24 @@
     renderAll();
 
     if (isApiConfigured()) {
+      if (budgetChanged) {
+        updateSyncStatusUI("syncing");
+        try {
+          await apiPostAction({
+            token: state.config.apiToken,
+            action: "set_budget",
+            monthly_budget: newBudget
+          });
+        } catch (err) {
+          console.error("[Budget PWA] set_budget failed:", err);
+          updateSyncStatusUI(navigator.onLine ? "error" : "offline");
+          showToast(
+            `Budget salvato in locale, errore sync: ${err.message || "riprova"}`,
+            "error"
+          );
+          return;
+        }
+      }
       await syncTransactions({ silent: false });
     } else {
       updateSyncStatusUI();
@@ -1409,6 +1458,9 @@
       }
     });
     dom.formSettings.addEventListener("submit", handleSaveSettings);
+    dom.inputBudget.addEventListener("input", () => {
+      state.budgetInputDirty = true;
+    });
 
     dom.btnToggleToken.addEventListener("click", () => {
       const isHidden = dom.inputApiToken.type === "password";

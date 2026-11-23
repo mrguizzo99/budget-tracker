@@ -1,9 +1,9 @@
-const CACHE_NAME = "budget-pwa-v3";
+const CACHE_NAME = "budget-pwa-v4";
 const APP_SHELL_ASSETS = [
   "./",
   "./index.html",
-  "./style.css?v=3",
-  "./app.js?v=3",
+  "./style.css?v=4",
+  "./app.js?v=4",
   "./manifest.json",
   "./icons/apple-touch-icon.png",
   "./icons/icon-192.png",
