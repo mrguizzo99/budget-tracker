@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Budget Giornaliero</title>
+  <meta name="description" content="Monitoraggio del budget mensile con calcolo dinamico del credito giornaliero disponibile (rollover automatico) sincronizzato con Google Sheets.">
+
+  <!-- iOS PWA Meta Tags -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Budget">
+  <meta name="theme-color" content="#000000">
+  <meta name="format-detection" content="telephone=no">
+
+  <!-- Icons & Manifest -->
+  <link rel="manifest" href="./manifest.json">
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="./icons/icon-512.png">
+
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="app-shell" id="app-shell">
+    <!-- Top iOS Navigation Bar -->
+    <header class="top-bar" id="top-bar">
+      <div class="top-bar-inner">
+        <div class="header-title-group">
+          <h1 class="month-title" id="month-title">Budget</h1>
+          <div class="sync-status" id="sync-status" aria-live="polite">
+            <span class="sync-dot" id="sync-dot"></span>
+            <span id="sync-status-text">Caricamento…</span>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button
+            type="button"
+            class="icon-btn"
+            id="btn-refresh"
+            aria-label="Aggiorna transazioni"
+            title="Aggiorna"
+          >
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+              <polyline points="21 3 21 9 15 9" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="icon-btn"
+            id="btn-settings"
+            aria-label="Apri impostazioni"
+            title="Impostazioni"
+          >
+            <svg class="icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 .92-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51.92H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Pull-to-refresh Indicator -->
+    <div class="ptr-indicator" id="ptr-indicator" aria-hidden="true">
+      <div class="ptr-spinner" id="ptr-spinner"></div>
+      <span class="ptr-label" id="ptr-label">Trascina per aggiornare</span>
+    </div>
+
+    <!-- Main Content -->
+    <main class="main-content" id="main-content">
+      <!-- Hero Circular Progress Widget -->
+      <section class="hero-section" aria-label="Credito giornaliero disponibile">
+        <div class="ring-container" id="ring-container" data-status="ok">
+          <svg class="ring-svg" viewBox="0 0 260 260" role="img" aria-labelledby="ring-aria-label">
+            <title id="ring-aria-label">Progresso del credito giornaliero disponibile</title>
+            <circle
+              class="ring-track"
+              cx="130"
+              cy="130"
+              r="112"
+            />
+            <circle
+              class="ring-progress"
+              id="ring-progress"
+              cx="130"
+              cy="130"
+              r="112"
+              stroke-dasharray="703.72"
+              stroke-dashoffset="703.72"
+            />
+          </svg>
+
+          <div class="ring-center">
+            <span class="ring-eyebrow" id="ring-status-label">DISPONIBILE OGGI</span>
+            <div class="ring-amount" id="today-available">€ 0,00</div>
+            <div class="ring-sublabel" id="ring-sublabel">su € 0,00 · — gg rimasti</div>
+            <div class="ring-today-spent" id="today-spent-label">Speso oggi: € 0,00</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Monthly Summary Card -->
+      <section class="summary-card" aria-label="Riepilogo budget mensile">
+        <div class="metrics-grid">
+          <div class="metric-cell">
+            <span class="metric-label">Quota oggi</span>
+            <span class="metric-value" id="metric-daily-quota">€ 0,00</span>
+            <span class="metric-sub" id="metric-rollover-delta">Rollover € 0,00</span>
+          </div>
+          <div class="metric-cell">
+            <span class="metric-label">Quota base</span>
+            <span class="metric-value" id="metric-base-quota">€ 0,00</span>
+            <span class="metric-sub" id="metric-base-detail">Budget / mese</span>
+          </div>
+          <div class="metric-cell">
+            <span class="metric-label">Speso nel mese</span>
+            <span class="metric-value" id="metric-month-spent">€ 0,00</span>
+            <span class="metric-sub" id="metric-month-spent-pct">0% del budget</span>
+          </div>
+          <div class="metric-cell">
+            <span class="metric-label">Budget residuo</span>
+            <span class="metric-value" id="metric-month-remaining">€ 0,00</span>
+            <span class="metric-sub" id="metric-days-remaining">— gg rimasti</span>
+          </div>
+        </div>
+
+        <div class="month-progress-wrap" aria-label="Avanzamento spesa mensile">
+          <div class="month-progress-track">
+            <div class="month-progress-fill" id="month-progress-fill"></div>
+            <div class="month-progress-today-marker" id="month-progress-today-marker" title="Avanzamento del mese"></div>
+          </div>
+          <div class="month-progress-meta">
+            <span id="month-progress-left">Giorno — di —</span>
+            <span id="month-progress-right">Budget € 0,00</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Transactions List -->
+      <section class="transactions-section" aria-label="Elenco spese del mese">
+        <div class="section-header">
+          <h2 class="section-title">Spese del mese</h2>
+          <span class="section-count" id="transactions-count">0 movimenti</span>
+        </div>
+
+        <div id="transactions-container" class="transactions-container">
+          <!-- Populated dynamically by app.js -->
+        </div>
+      </section>
+    </main>
+
+    <!-- Floating Quick-Add Button -->
+    <button
+      type="button"
+      class="fab-add"
+      id="btn-add-expense"
+      aria-label="Aggiungi spesa manuale"
+      title="Aggiungi spesa"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+        <line x1="12" y1="5" x2="12" y2="19" />
+        <line x1="5" y1="12" x2="19" y2="12" />
+      </svg>
+    </button>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- Modal: Add Expense Sheet -->
+  <div class="modal-backdrop" id="modal-add" role="dialog" aria-modal="true" aria-labelledby="modal-add-title" hidden>
+    <div class="sheet" id="sheet-add">
+      <div class="sheet-grabber" aria-hidden="true"></div>
+      <div class="sheet-header">
+        <button type="button" class="sheet-text-btn" id="btn-cancel-add">Annulla</button>
+        <h2 class="sheet-title" id="modal-add-title">Nuova spesa</h2>
+        <button type="submit" form="form-add-expense" class="sheet-text-btn primary" id="btn-submit-add-top">Salva</button>
+      </div>
+
+      <form id="form-add-expense" class="sheet-body" novalidate>
+        <div class="amount-input-box">
+          <span class="amount-currency" aria-hidden="true">€</span>
+          <input
+            type="text"
+            inputmode="decimal"
+            autocomplete="off"
+            id="input-amount"
+            name="amount"
+            placeholder="0,00"
+            aria-label="Importo in Euro"
+            required
+          >
+        </div>
+
+        <div class="ios-form-group">
+          <label class="ios-field">
+            <span class="ios-field-label">Esercente</span>
+            <input
+              type="text"
+              id="input-merchant"
+              name="merchant"
+              placeholder="Es. Bar, Supermercato, Contanti…"
+              autocomplete="off"
+              maxlength="80"
+              required
+            >
+          </label>
+        </div>
+
+        <div class="category-picker-wrap">
+          <span class="field-section-label">Categoria</span>
+          <div class="category-grid" id="category-grid" role="radiogroup" aria-label="Categoria spesa">
+            <!-- Populated by app.js -->
+          </div>
+          <input type="hidden" id="input-category" name="category" value="Cibo">
+        </div>
+
+        <button type="submit" class="btn-primary-full" id="btn-submit-add">
+          Aggiungi spesa
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Settings / API Configuration Sheet -->
+  <div class="modal-backdrop" id="modal-settings" role="dialog" aria-modal="true" aria-labelledby="modal-settings-title" hidden>
+    <div class="sheet" id="sheet-settings">
+      <div class="sheet-grabber" aria-hidden="true"></div>
+      <div class="sheet-header">
+        <button type="button" class="sheet-text-btn" id="btn-cancel-settings">Chiudi</button>
+        <h2 class="sheet-title" id="modal-settings-title">Impostazioni</h2>
+        <button type="submit" form="form-settings" class="sheet-text-btn primary">Salva</button>
+      </div>
+
+      <form id="form-settings" class="sheet-body" novalidate>
+        <p class="sheet-intro" id="settings-intro">
+          Collega il tuo Google Apps Script (<code>/exec</code>) e imposta il budget mensile per attivare la sincronizzazione automatica.
+        </p>
+
+        <div class="ios-form-group">
+          <label class="ios-field">
+            <span class="ios-field-label">Budget mensile (€)</span>
+            <input
+              type="text"
+              inputmode="decimal"
+              id="input-budget"
+              name="budget"
+              placeholder="600"
+              required
+            >
+          </label>
+          <div class="ios-field-divider"></div>
+          <label class="ios-field">
+            <span class="ios-field-label">API URL</span>
+            <input
+              type="url"
+              id="input-api-url"
+              name="apiUrl"
+              placeholder="https://script.google.com/macros/s/.../exec"
+              autocapitalize="none"
+              autocorrect="off"
+              spellcheck="false"
+            >
+          </label>
+          <div class="ios-field-divider"></div>
+          <div class="ios-field">
+            <label for="input-api-token" class="ios-field-label">API Token</label>
+            <div class="token-input-wrap">
+              <input
+                type="password"
+                id="input-api-token"
+                name="apiToken"
+                placeholder="Token segreto"
+                autocapitalize="none"
+                autocorrect="off"
+                spellcheck="false"
+              >
+              <button type="button" class="token-toggle-btn" id="btn-toggle-token" aria-label="Mostra o nascondi token">
+                Mostra
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <button type="submit" class="btn-primary-full" id="btn-save-settings">
+          Salva e sincronizza
+        </button>
+
+        <div class="settings-secondary-actions">
+          <button type="button" class="btn-secondary-link" id="btn-local-mode">
+            Usa solo in locale (offline)
+          </button>
+          <button type="button" class="btn-danger-link" id="btn-clear-cache">
+            Svuota cache transazioni
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Delete Confirmation iOS Action Sheet -->
+  <div class="modal-backdrop action-sheet-backdrop" id="modal-delete" role="dialog" aria-modal="true" aria-labelledby="delete-sheet-title" hidden>
+    <div class="action-sheet">
+      <div class="action-sheet-group">
+        <div class="action-sheet-message">
+          <div class="action-sheet-title" id="delete-sheet-title">Eliminare questa spesa?</div>
+          <div class="action-sheet-desc" id="delete-sheet-desc">L'operazione verrà sincronizzata con Google Sheets.</div>
+        </div>
+        <button type="button" class="action-sheet-btn destructive" id="btn-confirm-delete">
+          Elimina spesa
+        </button>
+      </div>
+      <div class="action-sheet-group">
+        <button type="button" class="action-sheet-btn cancel" id="btn-cancel-delete">
+          Annulla
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js" defer></script>
+</body>
+</html>
