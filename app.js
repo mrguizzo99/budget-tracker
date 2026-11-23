@@ -8,11 +8,13 @@
     API_URL: "API_URL",
     API_TOKEN: "API_TOKEN",
     BUDGET_MENSILE: "BUDGET_MENSILE",
+    RESET_DAY: "RESET_DAY",
     TRANSACTIONS_CACHE: "BUDGET_TRANSACTIONS_CACHE",
     LAST_SYNC: "BUDGET_LAST_SYNC",
     LOCAL_MODE: "BUDGET_LOCAL_MODE"
   };
 
+  const DEFAULT_RESET_DAY = 10;
   const RING_RADIUS = 112;
   const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS; // ~703.7168
 
@@ -77,6 +79,7 @@
       apiUrl: "",
       apiToken: "",
       monthlyBudget: 600,
+      resetDay: DEFAULT_RESET_DAY,
       localMode: false
     },
     transactions: [],
@@ -142,6 +145,7 @@
     formSettings: document.getElementById("form-settings"),
     btnCancelSettings: document.getElementById("btn-cancel-settings"),
     inputBudget: document.getElementById("input-budget"),
+    inputResetDay: document.getElementById("input-reset-day"),
     inputApiUrl: document.getElementById("input-api-url"),
     inputApiToken: document.getElementById("input-api-token"),
     btnToggleToken: document.getElementById("btn-toggle-token"),
@@ -342,17 +346,27 @@
   // =========================================================================
   // Persistence (localStorage)
   // =========================================================================
+  function sanitizeResetDay(raw) {
+    const parsed = Number.parseInt(String(raw ?? ""), 10);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 28) {
+      return DEFAULT_RESET_DAY;
+    }
+    return parsed;
+  }
+
   function loadFromStorage() {
     const apiUrl = (localStorage.getItem(STORAGE_KEYS.API_URL) || "").trim();
     const apiToken = (localStorage.getItem(STORAGE_KEYS.API_TOKEN) || "").trim();
     const rawBudget = localStorage.getItem(STORAGE_KEYS.BUDGET_MENSILE);
     const parsedBudget = parseEuroInput(rawBudget);
+    const resetDay = sanitizeResetDay(localStorage.getItem(STORAGE_KEYS.RESET_DAY));
     const localMode = localStorage.getItem(STORAGE_KEYS.LOCAL_MODE) === "1";
 
     state.config = {
       apiUrl,
       apiToken,
       monthlyBudget: Number.isFinite(parsedBudget) && parsedBudget > 0 ? parsedBudget : 600,
+      resetDay,
       localMode
     };
 
@@ -378,6 +392,7 @@
     localStorage.setItem(STORAGE_KEYS.API_URL, state.config.apiUrl);
     localStorage.setItem(STORAGE_KEYS.API_TOKEN, state.config.apiToken);
     localStorage.setItem(STORAGE_KEYS.BUDGET_MENSILE, String(state.config.monthlyBudget));
+    localStorage.setItem(STORAGE_KEYS.RESET_DAY, String(sanitizeResetDay(state.config.resetDay)));
     if (state.config.localMode) {
       localStorage.setItem(STORAGE_KEYS.LOCAL_MODE, "1");
     } else {
@@ -413,42 +428,110 @@
   }
 
   // =========================================================================
-  // Core Dynamic Daily Budget Calculation (Rollover)
+  // Core Dynamic Daily Budget Calculation (Rollover — Cycle from Reset Day)
   // =========================================================================
-  function calculateBudgetMetrics(transactions, monthlyBudget, now = new Date()) {
+  function diffCalendarDays(startDate, endDate) {
+    const utcStart = Date.UTC(
+      startDate.getFullYear(),
+      startDate.getMonth(),
+      startDate.getDate()
+    );
+    const utcEnd = Date.UTC(
+      endDate.getFullYear(),
+      endDate.getMonth(),
+      endDate.getDate()
+    );
+    return Math.round((utcEnd - utcStart) / 86_400_000);
+  }
+
+  function getCycleBounds(now, resetDay = DEFAULT_RESET_DAY) {
+    const safeDay = sanitizeResetDay(resetDay);
     const year = now.getFullYear();
     const month = now.getMonth();
-    const todayDay = now.getDate();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const daysRemaining = Math.max(1, daysInMonth - todayDay + 1);
+    const todayDate = now.getDate();
 
-    const monthTransactions = transactions
+    // Cycle runs from resetDay of month M (00:00) up to resetDay of month M+1 (00:00, exclusive)
+    let cycleStart;
+    let nextReset;
+
+    if (todayDate >= safeDay) {
+      cycleStart = new Date(year, month, safeDay, 0, 0, 0, 0);
+      nextReset = new Date(year, month + 1, safeDay, 0, 0, 0, 0);
+    } else {
+      cycleStart = new Date(year, month - 1, safeDay, 0, 0, 0, 0);
+      nextReset = new Date(year, month, safeDay, 0, 0, 0, 0);
+    }
+
+    const cycleEndInclusive = new Date(
+      nextReset.getFullYear(),
+      nextReset.getMonth(),
+      nextReset.getDate() - 1,
+      23,
+      59,
+      59,
+      999
+    );
+
+    const todayStart = new Date(year, month, todayDate, 0, 0, 0, 0);
+    const tomorrowStart = new Date(year, month, todayDate + 1, 0, 0, 0, 0);
+
+    const totalDaysInCycle = Math.max(1, diffCalendarDays(cycleStart, nextReset));
+    const currentCycleDay = Math.max(1, diffCalendarDays(cycleStart, todayStart) + 1);
+    const daysRemaining = Math.max(1, diffCalendarDays(todayStart, nextReset));
+
+    return {
+      resetDay: safeDay,
+      cycleStart,
+      nextReset,
+      cycleEndInclusive,
+      todayStart,
+      tomorrowStart,
+      totalDaysInCycle,
+      currentCycleDay,
+      daysRemaining
+    };
+  }
+
+  function calculateBudgetMetrics(
+    transactions,
+    monthlyBudget,
+    now = new Date(),
+    resetDay = DEFAULT_RESET_DAY
+  ) {
+    const bounds = getCycleBounds(now, resetDay);
+    const cycleStartMs = bounds.cycleStart.getTime();
+    const nextResetMs = bounds.nextReset.getTime();
+    const todayStartMs = bounds.todayStart.getTime();
+    const tomorrowStartMs = bounds.tomorrowStart.getTime();
+
+    const cycleTransactions = transactions
       .filter((tx) => {
         const d = new Date(tx.date);
-        return !Number.isNaN(d.getTime()) && d.getFullYear() === year && d.getMonth() === month;
+        const ms = d.getTime();
+        return !Number.isNaN(ms) && ms >= cycleStartMs && ms < nextResetMs;
       })
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     let pastDaysSpent = 0;
     let todaySpent = 0;
-    let totalMonthSpent = 0;
+    let totalCycleSpent = 0;
 
-    for (const tx of monthTransactions) {
-      const txDay = new Date(tx.date).getDate();
-      totalMonthSpent += tx.amount;
-      if (txDay < todayDay) {
+    for (const tx of cycleTransactions) {
+      const ms = new Date(tx.date).getTime();
+      totalCycleSpent += tx.amount;
+      if (ms < todayStartMs) {
         pastDaysSpent += tx.amount;
-      } else if (txDay === todayDay) {
+      } else if (ms >= todayStartMs && ms < tomorrowStartMs) {
         todaySpent += tx.amount;
       }
     }
 
-    const dailyQuotaBase = monthlyBudget / daysInMonth;
-    // Exact rollover formula:
-    // Budget_Disponibile_Oggi = ((Budget_Mensile - Spese_Giorni_Precedenti_Del_Mese) / Giorni_Rimanenti_Incluso_Oggi) - Spese_Oggi
-    const dailyQuotaToday = (monthlyBudget - pastDaysSpent) / daysRemaining;
+    const dailyQuotaBase = monthlyBudget / bounds.totalDaysInCycle;
+    // Exact rollover formula for the active cycle (e.g. 10th to 10th):
+    // Budget_Disponibile_Oggi = ((Budget_Mensile - Spese_Giorni_Precedenti_Del_Ciclo) / Giorni_Rimanenti_Incluso_Oggi) - Spese_Oggi
+    const dailyQuotaToday = (monthlyBudget - pastDaysSpent) / bounds.daysRemaining;
     const availableToday = dailyQuotaToday - todaySpent;
-    const monthlyRemaining = monthlyBudget - totalMonthSpent;
+    const monthlyRemaining = monthlyBudget - totalCycleSpent;
     const rolloverDelta = dailyQuotaToday - dailyQuotaBase;
 
     // Status thresholds relative to today's recalculated quota
@@ -473,16 +556,18 @@
 
     return {
       now,
-      year,
-      month,
-      todayDay,
-      daysInMonth,
-      daysRemaining,
+      resetDay: bounds.resetDay,
+      cycleStart: bounds.cycleStart,
+      nextReset: bounds.nextReset,
+      cycleEndInclusive: bounds.cycleEndInclusive,
+      currentCycleDay: bounds.currentCycleDay,
+      totalDaysInCycle: bounds.totalDaysInCycle,
+      daysRemaining: bounds.daysRemaining,
       monthlyBudget,
-      monthTransactions,
+      cycleTransactions,
       pastDaysSpent,
       todaySpent,
-      totalMonthSpent,
+      totalCycleSpent,
       dailyQuotaBase,
       dailyQuotaToday,
       availableToday,
@@ -653,15 +738,25 @@
     }
   }
 
-  function renderAll() {
-    const metrics = calculateBudgetMetrics(state.transactions, state.config.monthlyBudget, new Date());
+  function formatShortDayMonth(dateObj) {
+    return new Intl.DateTimeFormat("it-IT", {
+      day: "numeric",
+      month: "short"
+    }).format(dateObj);
+  }
 
-    // Header Month Title
-    const monthLabel = new Intl.DateTimeFormat("it-IT", {
-      month: "long",
-      year: "numeric"
-    }).format(metrics.now);
-    dom.monthTitle.textContent = monthLabel;
+  function renderAll() {
+    const metrics = calculateBudgetMetrics(
+      state.transactions,
+      state.config.monthlyBudget,
+      new Date(),
+      state.config.resetDay
+    );
+
+    // Header Cycle Title (e.g. "10 nov – 9 dic")
+    const startLabel = formatShortDayMonth(metrics.cycleStart);
+    const endLabel = formatShortDayMonth(metrics.cycleEndInclusive);
+    dom.monthTitle.textContent = `${startLabel} – ${endLabel}`;
 
     // Circular SVG Widget
     const isNegative = metrics.availableToday < -0.005;
@@ -697,12 +792,12 @@
     }
 
     dom.metricBaseQuota.textContent = formatEuro(metrics.dailyQuotaBase);
-    dom.metricBaseDetail.textContent = `${formatEuro(metrics.monthlyBudget, true)} / ${metrics.daysInMonth} gg`;
+    dom.metricBaseDetail.textContent = `${formatEuro(metrics.monthlyBudget, true)} / ${metrics.totalDaysInCycle} gg`;
 
-    dom.metricMonthSpent.textContent = formatEuro(metrics.totalMonthSpent);
+    dom.metricMonthSpent.textContent = formatEuro(metrics.totalCycleSpent);
     const spentPct =
       metrics.monthlyBudget > 0
-        ? Math.round((metrics.totalMonthSpent / metrics.monthlyBudget) * 100)
+        ? Math.round((metrics.totalCycleSpent / metrics.monthlyBudget) * 100)
         : 0;
     dom.metricMonthSpentPct.textContent = `${spentPct}% del budget`;
     dom.metricMonthSpentPct.className =
@@ -711,11 +806,16 @@
     dom.metricMonthRemaining.textContent = formatEuro(metrics.monthlyRemaining);
     dom.metricMonthRemaining.classList.toggle("negative", metrics.monthlyRemaining < -0.005);
     dom.metricDaysRemaining.textContent =
-      metrics.daysRemaining === 1 ? "Ultimo giorno del mese" : `${metrics.daysRemaining} giorni rimasti`;
+      metrics.daysRemaining === 1
+        ? `Reset domani (${formatShortDayMonth(metrics.nextReset)})`
+        : `${metrics.daysRemaining} gg · Reset ${formatShortDayMonth(metrics.nextReset)}`;
 
-    // Monthly Progress Bar
+    // Cycle Progress Bar
     const fillPct = Math.max(0, Math.min(100, spentPct));
-    const elapsedPct = Math.max(2, Math.min(98, (metrics.todayDay / metrics.daysInMonth) * 100));
+    const elapsedPct = Math.max(
+      2,
+      Math.min(98, (metrics.currentCycleDay / metrics.totalDaysInCycle) * 100)
+    );
     dom.monthProgressFill.style.width = `${fillPct}%`;
     dom.monthProgressTodayMarker.style.left = `${elapsedPct.toFixed(1)}%`;
 
@@ -727,15 +827,15 @@
       dom.monthProgressFill.style.backgroundColor = "var(--ios-green)";
     }
 
-    dom.monthProgressLeft.textContent = `Giorno ${metrics.todayDay} di ${metrics.daysInMonth}`;
+    dom.monthProgressLeft.textContent = `Giorno ${metrics.currentCycleDay} di ${metrics.totalDaysInCycle}`;
     dom.monthProgressRight.textContent = `Budget ${formatEuro(metrics.monthlyBudget, true)}`;
 
     // Grouped Transactions List
-    renderTransactionsList(metrics.monthTransactions, metrics.now);
+    renderTransactionsList(metrics.cycleTransactions, metrics.now);
   }
 
-  function renderTransactionsList(monthTransactions, now) {
-    const count = monthTransactions.length;
+  function renderTransactionsList(cycleTransactions, now) {
+    const count = cycleTransactions.length;
     dom.transactionsCount.textContent =
       count === 1 ? "1 movimento" : `${count} movimenti`;
 
@@ -748,7 +848,7 @@
               <line x1="2" y1="10" x2="22" y2="10" />
             </svg>
           </div>
-          <p class="empty-state-title">Nessuna spesa questo mese</p>
+          <p class="empty-state-title">Nessuna spesa in questo periodo</p>
           <p class="empty-state-desc">Premi il tasto + in basso per registrare la prima spesa o trascina verso il basso per sincronizzare.</p>
         </div>
       `;
@@ -757,7 +857,7 @@
 
     // Group by local day key
     const groupsMap = new Map();
-    for (const tx of monthTransactions) {
+    for (const tx of cycleTransactions) {
       const dateObj = new Date(tx.date);
       const key = getLocalDateKey(dateObj);
       if (!groupsMap.has(key)) {
@@ -922,6 +1022,7 @@
 
   function openSettingsModal({ mandatory = false } = {}) {
     dom.inputBudget.value = String(state.config.monthlyBudget).replace(".", ",");
+    dom.inputResetDay.value = String(sanitizeResetDay(state.config.resetDay));
     dom.inputApiUrl.value = state.config.apiUrl;
     dom.inputApiToken.value = state.config.apiToken;
     dom.inputApiToken.type = "password";
@@ -1068,12 +1169,19 @@
     event.preventDefault();
 
     const budget = parseEuroInput(dom.inputBudget.value);
+    const rawResetDay = Number.parseInt(dom.inputResetDay.value, 10);
     const apiUrl = dom.inputApiUrl.value.trim();
     const apiToken = dom.inputApiToken.value.trim();
 
     if (!Number.isFinite(budget) || budget <= 0) {
       showToast("Inserisci un budget mensile valido", "error");
       dom.inputBudget.focus();
+      return;
+    }
+
+    if (!Number.isFinite(rawResetDay) || rawResetDay < 1 || rawResetDay > 28) {
+      showToast("Il giorno di reset deve essere tra 1 e 28", "error");
+      dom.inputResetDay.focus();
       return;
     }
 
@@ -1093,6 +1201,7 @@
       apiUrl,
       apiToken,
       monthlyBudget: Math.round(budget * 100) / 100,
+      resetDay: rawResetDay,
       localMode: !apiUrl
     };
     saveConfigToStorage();
@@ -1110,6 +1219,7 @@
   function handleLocalModeClick() {
     const budget = parseEuroInput(dom.inputBudget.value);
     state.config.monthlyBudget = Number.isFinite(budget) && budget > 0 ? budget : 600;
+    state.config.resetDay = sanitizeResetDay(dom.inputResetDay.value);
     state.config.apiUrl = "";
     state.config.apiToken = "";
     state.config.localMode = true;

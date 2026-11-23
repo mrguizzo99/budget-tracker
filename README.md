@@ -4,9 +4,10 @@ Progressive Web App mobile-first ottimizzata per iPhone (Safari iOS), progettata
 
 ## Funzionalità principali
 
+- **Ciclo mensile dal 10 al 10**: il conteggio parte il **10 di ogni mese** e si resetta automaticamente il **10 del mese successivo** (configurabile anche nelle Impostazioni).
 - **Calcolo dinamico giornaliero (Rollover automatico)**:
   ```text
-  Budget_Disponibile_Oggi = ((Budget_Mensile - Spese_Giorni_Precedenti_Del_Mese) / Giorni_Rimanenti_Incluso_Oggi) - Spese_Oggi
+  Budget_Disponibile_Oggi = ((Budget_Mensile - Spese_Giorni_Precedenti_Del_Ciclo) / Giorni_Rimanenti_Incluso_Oggi) - Spese_Oggi
   ```
 - **Widget circolare SVG animato** con soglie colore iOS:
   - Verde (`#30D158`): > 50% della quota odierna

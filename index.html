@@ -116,7 +116,7 @@
             <span class="metric-sub" id="metric-base-detail">Budget / mese</span>
           </div>
           <div class="metric-cell">
-            <span class="metric-label">Speso nel mese</span>
+            <span class="metric-label">Speso nel periodo</span>
             <span class="metric-value" id="metric-month-spent">€ 0,00</span>
             <span class="metric-sub" id="metric-month-spent-pct">0% del budget</span>
           </div>
@@ -127,10 +127,10 @@
           </div>
         </div>
 
-        <div class="month-progress-wrap" aria-label="Avanzamento spesa mensile">
+        <div class="month-progress-wrap" aria-label="Avanzamento spesa del periodo">
           <div class="month-progress-track">
             <div class="month-progress-fill" id="month-progress-fill"></div>
-            <div class="month-progress-today-marker" id="month-progress-today-marker" title="Avanzamento del mese"></div>
+            <div class="month-progress-today-marker" id="month-progress-today-marker" title="Avanzamento del periodo"></div>
           </div>
           <div class="month-progress-meta">
             <span id="month-progress-left">Giorno — di —</span>
@@ -140,9 +140,9 @@
       </section>
 
       <!-- Transactions List -->
-      <section class="transactions-section" aria-label="Elenco spese del mese">
+      <section class="transactions-section" aria-label="Elenco spese del periodo">
         <div class="section-header">
-          <h2 class="section-title">Spese del mese</h2>
+          <h2 class="section-title">Spese del periodo</h2>
           <span class="section-count" id="transactions-count">0 movimenti</span>
         </div>
 
@@ -237,7 +237,7 @@
 
       <form id="form-settings" class="sheet-body" novalidate>
         <p class="sheet-intro" id="settings-intro">
-          Collega il tuo Google Apps Script (<code>/exec</code>) e imposta il budget mensile per attivare la sincronizzazione automatica.
+          Collega il tuo Google Apps Script (<code>/exec</code>) e imposta budget e giorno di reset del ciclo (predefinito: il 10 di ogni mese).
         </p>
 
         <div class="ios-form-group">
@@ -249,6 +249,21 @@
               id="input-budget"
               name="budget"
               placeholder="600"
+              required
+            >
+          </label>
+          <div class="ios-field-divider"></div>
+          <label class="ios-field">
+            <span class="ios-field-label">Giorno di inizio / reset ciclo (1–28)</span>
+            <input
+              type="number"
+              inputmode="numeric"
+              min="1"
+              max="28"
+              id="input-reset-day"
+              name="resetDay"
+              placeholder="10"
+              value="10"
               required
             >
           </label>
