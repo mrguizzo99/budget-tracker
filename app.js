@@ -1477,13 +1477,33 @@
   }
 
   function registerServiceWorker() {
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").catch((err) => {
+    if (!("serviceWorker" in navigator)) return;
+
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    let hasReloaded = false;
+
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (hadController && !hasReloaded) {
+        hasReloaded = true;
+        window.location.reload();
+      }
+    });
+
+    window.addEventListener("load", () => {
+      navigator.serviceWorker
+        .register("./sw.js", { updateViaCache: "none" })
+        .then((registration) => {
+          registration.update().catch(() => {});
+          document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") {
+              registration.update().catch(() => {});
+            }
+          });
+        })
+        .catch((err) => {
           console.warn("[Budget PWA] SW registration failed:", err);
         });
-      });
-    }
+    });
   }
 
   // =========================================================================

@@ -1,9 +1,9 @@
-const CACHE_NAME = "budget-pwa-v2";
+const CACHE_NAME = "budget-pwa-v3";
 const APP_SHELL_ASSETS = [
   "./",
   "./index.html",
-  "./style.css",
-  "./app.js",
+  "./style.css?v=3",
+  "./app.js?v=3",
   "./manifest.json",
   "./icons/apple-touch-icon.png",
   "./icons/icon-192.png",
@@ -12,22 +12,36 @@ const APP_SHELL_ASSETS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL_ASSETS))
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.all(
+        APP_SHELL_ASSETS.map((asset) =>
+          fetch(asset, { cache: "no-cache" })
+            .then((response) => {
+              if (response && response.ok) {
+                return cache.put(asset, response);
+              }
+            })
+            .catch(() => cache.add(asset))
+        )
+      )
+    )
   );
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((key) => key !== CACHE_NAME)
-          .map((key) => caches.delete(key))
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(
+          keys
+            .filter((key) => key !== CACHE_NAME)
+            .map((key) => caches.delete(key))
+        )
       )
-    )
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 self.addEventListener("fetch", (event) => {
@@ -45,10 +59,28 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Navigation requests: network-first with cache fallback for fresh GitHub Pages updates
+  // Icons: cache-first
+  if (url.pathname.includes("/icons/")) {
+    event.respondWith(
+      caches.match(request).then(
+        (cached) =>
+          cached ||
+          fetch(request).then((response) => {
+            if (response && response.ok && response.type === "basic") {
+              const copy = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+            }
+            return response;
+          })
+      )
+    );
+    return;
+  }
+
+  // Navigation requests: network-first (bypassing HTTP cache) with offline fallback
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request)
+      fetch(request, { cache: "no-cache" })
         .then((response) => {
           if (response && response.ok) {
             const copy = response.clone();
@@ -61,20 +93,16 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static app shell assets: stale-while-revalidate for instant startup + background update
+  // Core static files (CSS, JS, manifest): network-first so iPhone reloads always pick up updates immediately
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const networkFetch = fetch(request)
-        .then((response) => {
-          if (response && response.ok && response.type === "basic") {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        })
-        .catch(() => cached);
-
-      return cached || networkFetch;
-    })
+    fetch(request, { cache: "no-cache" })
+      .then((response) => {
+        if (response && response.ok && response.type === "basic") {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+        }
+        return response;
+      })
+      .catch(() => caches.match(request))
   );
 });
